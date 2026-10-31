@@ -26,25 +26,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Extract Android Project ZIP
+      - name: Extract and Locate Project
         shell: bash
         run: |
           cd "$GITHUB_WORKSPACE"
 
-          if ! find . -name settings.gradle.kts \
-            -not -path '*/.gradle/*' | grep -q .; then
+          ARCHIVE=$(find . -maxdepth 3 -type f \
+            -iname "YB_Aurora_VerON_VERA_Sifirdan_Tek_Proje.zip" \
+            -print -quit)
 
-            ARCHIVE=$(find . -maxdepth 3 -type f \
-              -iname "YB_Aurora_VerON_VERA_Sifirdan_Tek_Proje.zip" \
-              -print -quit)
-
-            if [ -z "$ARCHIVE" ]; then
-              echo "ERROR: Proje ZIP dosyasi bulunamadi!"
-              echo "GitHub deposunun kokune ZIP dosyasini yukle."
-              exit 1
-            fi
-
-            echo "ZIP bulundu: $ARCHIVE"
+          if [ -n "$ARCHIVE" ]; then
+            echo "ZIP found: $ARCHIVE"
             unzip -oq "$ARCHIVE" -d "$GITHUB_WORKSPACE"
           fi
 
@@ -55,14 +47,15 @@ jobs:
             -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: settings.gradle.kts bulunamadi!"
+            echo "ERROR: Android project not found!"
+            find "$GITHUB_WORKSPACE" -maxdepth 4 -type f | head -100
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
 
           if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: app/build.gradle.kts bulunamadi!"
+            echo "ERROR: app module not found!"
             exit 1
           fi
 
@@ -74,30 +67,31 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Install Android SDK Components
+      - name: Verify Android SDK
         shell: bash
         run: |
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
 
           if [ ! -d "$SDK_ROOT" ]; then
-            echo "ERROR: Android SDK bulunamadi!"
+            echo "ERROR: Android SDK not found!"
             exit 1
           fi
 
-          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" \
-            -type f -name sdkmanager -print | sort -V | tail -n 1)
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager bulunamadi!"
+          echo "Checking Android SDK packages..."
+
+          if [ ! -d "$SDK_ROOT/platforms/android-35" ]; then
+            echo "ERROR: Android SDK Platform 35 missing!"
             exit 1
           fi
 
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses
+          if [ ! -d "$SDK_ROOT/build-tools/35.0.0" ]; then
+            echo "ERROR: Android Build Tools 35.0.0 missing!"
+            exit 1
+          fi
 
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          echo "Android SDK components verified."
 
       - name: Verify Build Environment
         run: |
@@ -105,17 +99,21 @@ jobs:
           gradle --version
 
       - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
-          gradle --no-daemon --stacktrace :app:assembleDebug
+          gradle \
+            --no-daemon \
+            --stacktrace \
+            -p "$PROJECT_DIR" \
+            :app:assembleDebug
 
       - name: Verify APK
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK olusturulamadi!"
+            echo "ERROR: APK not generated!"
             exit 1
           fi
 
