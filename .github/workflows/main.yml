@@ -26,13 +26,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Locate Android Project
+      - name: Extract Android Project ZIP
         shell: bash
         run: |
+          cd "$GITHUB_WORKSPACE"
+
+          if ! find . -name settings.gradle.kts \
+            -not -path '*/.gradle/*' | grep -q .; then
+
+            ARCHIVE=$(find . -maxdepth 3 -type f \
+              -iname "YB_Aurora_VerON_VERA_Sifirdan_Tek_Proje.zip" \
+              -print -quit)
+
+            if [ -z "$ARCHIVE" ]; then
+              echo "ERROR: Proje ZIP dosyasi bulunamadi!"
+              echo "GitHub deposunun kokune ZIP dosyasini yukle."
+              exit 1
+            fi
+
+            echo "ZIP bulundu: $ARCHIVE"
+            unzip -oq "$ARCHIVE" -d "$GITHUB_WORKSPACE"
+          fi
+
           PROJECT_FILE=$(find "$GITHUB_WORKSPACE" \
             -type f \
             -name "settings.gradle.kts" \
-            -not -path "*/.gradle/*" \
+            -not -path '*/.gradle/*' \
             -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
@@ -43,28 +62,24 @@ jobs:
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
 
           if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: Android app modulu bulunamadi!"
+            echo "ERROR: app/build.gradle.kts bulunamadi!"
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found: $PROJECT_DIR"
+          echo "PROJECT FOUND: $PROJECT_DIR"
 
-      - name: Setup Android SDK
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Install Android SDK Components
         shell: bash
         run: |
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
 
-          if [ -z "$SDK_ROOT" ]; then
-            for DIR in /usr/local/lib/android/sdk /usr/local/android/sdk; do
-              if [ -d "$DIR/cmdline-tools" ]; then
-                SDK_ROOT="$DIR"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
+          if [ ! -d "$SDK_ROOT" ]; then
             echo "ERROR: Android SDK bulunamadi!"
             exit 1
           fi
@@ -77,38 +92,25 @@ jobs:
             exit 1
           fi
 
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses
 
-          yes | "$SDKMANAGER" --licenses
-
-          "$SDKMANAGER" --install \
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Setup Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Verify Environment
+      - name: Verify Build Environment
         run: |
           java -version
           gradle --version
-          echo "Android SDK: $ANDROID_HOME"
 
-      - name: Build YB Aurora Debug APK
+      - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          gradle --no-daemon \
-            --stacktrace \
-            :app:assembleDebug
+          gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Verify APK
         working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
